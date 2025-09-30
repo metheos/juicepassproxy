@@ -671,24 +671,36 @@ async def main():
             )
 
         try:
-            await asyncio.gather(
-                *jpp_task_list,
-            )
+            results = await asyncio.gather(*jpp_task_list, return_exceptions=True)
+            for idx, result in enumerate(results):
+                if isinstance(result, Exception):
+                    _LOGGER.warning(
+                        f"Task {jpp_task_list[idx].get_name()} ended with error: {result.__class__.__qualname__}: {result}"
+                    )
         except Exception as e:
             _LOGGER.exception(
-                f"A JuicePass Proxy task failed: {e.__class__.__qualname__}: {e}"
+                f"A JuicePass Proxy supervise block caught: {e.__class__.__qualname__}: {e}"
             )
-            await mqtt_handler.close()
-            await mitm_handler.close()
-            del mqtt_handler
-            del mitm_handler
+        finally:
+            # Ensure graceful shutdown of components before restarting loop
+            try:
+                await mqtt_handler.close()
+            except Exception:
+                pass
+            try:
+                await mitm_handler.close()
+            except Exception:
+                pass
             if udpc_updater is not None:
-                await udpc_updater.close()
-                del udpc_updater
-            await asyncio.sleep(5)
-            _LOGGER.debug(f"jpp_task_list: {jpp_task_list}")
+                try:
+                    await udpc_updater.close()
+                except Exception:
+                    pass
+            # Cancel any leftover tasks
             for task in jpp_task_list:
-                task.cancel()
+                if not task.done():
+                    task.cancel()
+            await asyncio.sleep(5)
         await asyncio.sleep(5)
 
     _LOGGER.error("JuicePass Proxy Exiting")

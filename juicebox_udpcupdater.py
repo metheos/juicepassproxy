@@ -35,13 +35,56 @@ class JuiceboxUDPCUpdater:
         self._telnet = None
         self._error_count = 0
         self._error_timestamp_list = []
+        self._stop_event = asyncio.Event()
+        self._supervisor_task = None
 
     async def start(self):
         _LOGGER.info("Starting JuiceboxUDPCUpdater")
-
-        await self._connect()
+        # Run a resilient supervisor loop that keeps trying until closed
+        while not self._stop_event.is_set():
+            try:
+                await self._connect()
+                if self._udpc_update_loop_task is not None:
+                    await self._udpc_update_loop_task
+                else:
+                    # Couldn't start the loop; wait then retry
+                    await asyncio.sleep(self._default_sleep_interval)
+            except asyncio.CancelledError:
+                # Graceful shutdown
+                break
+            except ChildProcessError as e:
+                _LOGGER.warning(
+                    "JuiceboxUDPCUpdater encountered an error, will retry. "
+                    f"({e.__class__.__qualname__}: {e})"
+                )
+                await self._add_error()
+                await asyncio.sleep(5)
+            except Exception as e:
+                _LOGGER.exception(
+                    f"JuiceboxUDPCUpdater unexpected error; retrying. {e.__class__.__qualname__}: {e}"
+                )
+                await self._add_error()
+                await asyncio.sleep(5)
+            finally:
+                if self._telnet is not None:
+                    try:
+                        await self._telnet.close()
+                    except Exception:
+                        pass
+                    self._telnet = None
+                # Short pause before next supervisor iteration
+                await asyncio.sleep(1)
 
     async def close(self):
+        self._stop_event.set()
+        # Cancel background loop if running
+        if self._udpc_update_loop_task is not None and not self._udpc_update_loop_task.done():
+            self._udpc_update_loop_task.cancel()
+            try:
+                await self._udpc_update_loop_task
+            except Exception:
+                pass
+            self._udpc_update_loop_task = None
         if self._telnet is not None:
             await self._telnet.close()
             self._telnet = None
@@ -93,15 +136,18 @@ class JuiceboxUDPCUpdater:
                 self._telnet = None
                 pass
         if self._telnet is None:
-            raise ChildProcessError("JuiceboxUDPCUpdater: Unable to connect to Telnet.")
+            _LOGGER.warning("JuiceboxUDPCUpdater: Unable to connect to Telnet. Will retry.")
+            return
+        # Start the UDPC update loop as a background task if not already running
         if self._udpc_update_loop_task is None or self._udpc_update_loop_task.done():
-            self._udpc_update_loop_task = await self._udpc_update_loop()
-            self._loop.create_task(self._udpc_update_loop_task)
+            self._udpc_update_loop_task = asyncio.create_task(
+                self._udpc_update_loop(), name="udpc_update_loop"
+            )
         _LOGGER.info("JuiceboxUDPCUpdater Connected to Juicebox Telnet")
 
     async def _udpc_update_loop(self):
         _LOGGER.debug("Starting JuiceboxUDPCUpdater Loop")
-        while self._error_count < MAX_ERROR_COUNT:
+        while not self._stop_event.is_set() and self._error_count < MAX_ERROR_COUNT:
             sleep_interval = self._default_sleep_interval
             if self._telnet is None:
                 _LOGGER.warning(
@@ -122,10 +168,15 @@ class JuiceboxUDPCUpdater:
                 self._telnet = None
                 sleep_interval = 3
             await asyncio.sleep(sleep_interval)
-        raise ChildProcessError(
-            f"JuiceboxUDPCUpdater: More than {self._error_count} "
-            f"errors in the last {ERROR_LOOKBACK_MIN} min."
+        # When too many errors occur, back off instead of crashing the whole app
+        _LOGGER.warning(
+            "JuiceboxUDPCUpdater hit error threshold (%d in last %d min). Backing off.",
+            self._error_count,
+            ERROR_LOOKBACK_MIN,
         )
+        # Reset counters and let supervisor retry after a short pause
+        self._error_count = 0
+        self._error_timestamp_list.clear()
 
     async def _udpc_update_handler(self, default_sleep_interval):
         sleep_interval = default_sleep_interval

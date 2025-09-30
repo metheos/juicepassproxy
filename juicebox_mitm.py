@@ -102,8 +102,7 @@ class JuiceboxMITM:
         if self._dgram is None:
             raise ChildProcessError("JuiceboxMITM: Unable to start MITM UDP Server.")
         if self._mitm_loop_task is None or self._mitm_loop_task.done():
-            self._mitm_loop_task = await self._mitm_loop()
-            self._loop.create_task(self._mitm_loop_task)
+            self._mitm_loop_task = asyncio.create_task(self._mitm_loop(), name="mitm_loop")
         _LOGGER.debug(f"JuiceboxMITM Connected. {self._jpp_addr}")
 
     async def _mitm_loop(self) -> None:
@@ -313,34 +312,46 @@ class JuiceboxMITM:
         return defined
         
     async def __build_cmd_message(self, new_values):
-       
-       if type(self._last_status_message) is JuiceboxEncryptedMessage:
-          _LOGGER.info("Responses for encrypted protocol not supported yet")
-          return None
-          
-       # TODO: check which other versions can be considered as new_version of protocol
-       # packet captures indicate that v07 uses old version
-       new_version = self._last_status_message and (self._last_status_message.get_value("v") == "09u")
-       if self._last_command:
-          message = JuiceboxCommand(previous=self._last_command, new_version=new_version)
-       else:
-          message = JuiceboxCommand(new_version=new_version)
-          # Should start with values 
-          new_values = True
-          
-       if new_values:
-           if (not self.is_mqtt_numeric_entity_defined("current_max_offline_set")) or (not self.is_mqtt_numeric_entity_defined("current_max_online_set")):
-              _LOGGER.error("Must have both current_max(online|offline) defined to send command message")
+        if isinstance(self._last_status_message, JuiceboxEncryptedMessage):
+            _LOGGER.info("Responses for encrypted protocol not supported yet")
+            return None
 
-              return None
+        # TODO: check which other versions can be considered as new_version of protocol
+        # packet captures indicate that v07 uses old version
+        new_version = self._last_status_message and (
+            self._last_status_message.get_value("v") == "09u"
+        )
+        if self._last_command:
+            message = JuiceboxCommand(previous=self._last_command, new_version=new_version)
+        else:
+            message = JuiceboxCommand(new_version=new_version)
+            # Should start with values
+            new_values = True
 
-           message.offline_amperage = int(self._mqtt_handler.get_entity("current_max_offline_set").state)
-           message.instant_amperage = int(self._mqtt_handler.get_entity("current_max_online_set").state)
-           
-       _LOGGER.info(f"command message = {message} new_values={new_values} new_version={new_version}")
+        if new_values:
+            if (
+                not self.is_mqtt_numeric_entity_defined("current_max_offline_set")
+            ) or (
+                not self.is_mqtt_numeric_entity_defined("current_max_online_set")
+            ):
+                _LOGGER.error(
+                    "Must have both current_max(online|offline) defined to send command message"
+                )
+                return None
 
-       self._last_command = message;
-       return message.build()
+            message.offline_amperage = int(
+                self._mqtt_handler.get_entity("current_max_offline_set").state
+            )
+            message.instant_amperage = int(
+                self._mqtt_handler.get_entity("current_max_online_set").state
+            )
+
+        _LOGGER.info(
+            f"command message = {message} new_values={new_values} new_version={new_version}"
+        )
+
+        self._last_command = message
+        return message.build()
 
     # Send a new message using values on mqtt entities
     async def send_cmd_message_to_juicebox(self, new_values):
