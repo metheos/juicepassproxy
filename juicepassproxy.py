@@ -649,6 +649,7 @@ async def main():
                 udpc_port=local_addr[1],
                 telnet_timeout=telnet_timeout,
                 loglevel=_LOGGER.getEffectiveLevel(),
+                mqtt_handler=mqtt_handler,
             )
             jpp_task_list.append(
                 asyncio.create_task(udpc_updater.start(), name="udpc_updater")

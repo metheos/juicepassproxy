@@ -6,7 +6,11 @@ import ha_mqtt_discoverable.sensors as ha_mqtt
 from const import ERROR_LOOKBACK_MIN, VERSION  # MAX_ERROR_COUNT,
 from ha_mqtt_discoverable import DeviceInfo, Settings
 from paho.mqtt.client import Client, MQTTMessage
-from juicebox_message import JuiceboxStatusMessage, JuiceboxDebugMessage, JuiceboxEncryptedMessage
+from juicebox_message import (
+    JuiceboxStatusMessage,
+    JuiceboxDebugMessage,
+    JuiceboxEncryptedMessage,
+)
 
 _LOGGER = logging.getLogger(__name__)
 MQTT_SENDING_ENTITIES = ["text", "number", "switch", "button"]
@@ -79,18 +83,18 @@ class JuiceboxMQTTEntity:
     async def set(self, state=None):
         self._state = state
         try:
-            if self.entity_type == 'number':
+            if self.entity_type == "number":
                 # float to be used by any number, JuiceboxMessage will use int
                 getattr(self._mqtt, self._set_func)(float(state))
-            elif self.entity_type == 'switch':
-                # This works with ha-mqtt-discoverable after v0.14.0 
-                # but for ARM we need older version 
+            elif self.entity_type == "switch":
+                # This works with ha-mqtt-discoverable after v0.14.0
+                # but for ARM we need older version
                 # getattr(self._mqtt, self._set_func)(state.lower() == 'on')
                 # workaround calling the on/off methods
-                if (state.lower() == 'on'):
-                   self._mqtt.on()
+                if state.lower() == "on":
+                    self._mqtt.on()
                 else:
-                   self._mqtt.off()
+                    self._mqtt.off()
             else:
                 getattr(self._mqtt, self._set_func)(state)
         except AttributeError as e:
@@ -147,7 +151,7 @@ class JuiceboxMQTTSendingEntity(JuiceboxMQTTEntity):
 
         if self._kwargs.get("initial_state", None) is not None:
             await self.set(self._kwargs.get("initial_state", None))
-        elif self.entity_type == 'number':
+        elif self.entity_type == "number":
             # The state will came on juicebox messages
             _LOGGER.warning(f"{self.name} has no initial_state")
         else:
@@ -168,7 +172,7 @@ class JuiceboxMQTTSendingEntity(JuiceboxMQTTEntity):
             f"{state}. User Data: {user_data}"
         )
         if self._mitm_handler:
-            if user_data == 'RAW':
+            if user_data == "RAW":
                 _LOGGER.debug(f"Sending to MITM: {state}")
                 await self._mitm_handler.send_data_to_juicebox(state.encode("utf-8"))
             else:
@@ -209,7 +213,6 @@ class JuiceboxMQTTNumber(JuiceboxMQTTSendingEntity):
         super().__init__(name, **kwargs)
 
 
-
 class JuiceboxMQTTSwitch(JuiceboxMQTTSendingEntity):
     def __init__(
         self,
@@ -221,12 +224,11 @@ class JuiceboxMQTTSwitch(JuiceboxMQTTSendingEntity):
         self._set_func = "update_state"
         super().__init__(name, **kwargs)
 
-
     def is_on(self):
 
         if type(self.state) is str:
-           return self.state.lower() == 'on'
-           
+            return self.state.lower() == "on"
+
         return self.state
 
 
@@ -265,7 +267,11 @@ class JuiceboxMQTTHandler:
         self._config = config
         self._mitm_handler = mitm_handler
         # Try to use first the MAX_CURRENT as maximum, if not found use the previous run current_rating or default of 48 which is safe and not so big
-        self._max_current = config.get_device(self._juicebox_id, "MAX_CURRENT", config.get_device(self._juicebox_id, "current_rating", 48))
+        self._max_current = config.get_device(
+            self._juicebox_id,
+            "MAX_CURRENT",
+            config.get_device(self._juicebox_id, "current_rating", 48),
+        )
         _LOGGER.info(f"max_current: {self._max_current}")
         self._error_count = 0
         self._error_timestamp_list = []
@@ -310,7 +316,7 @@ class JuiceboxMQTTHandler:
                 unit_of_measurement="A",
                 expire_after=7200,
             ),
-            # Offline max 
+            # Offline max
             "current_max_offline": JuiceboxMQTTSensor(
                 name="Max Current(Offline/Device)",
                 state_class="measurement",
@@ -408,21 +414,37 @@ class JuiceboxMQTTHandler:
                 icon="mdi:bug",
                 entity_category="diagnostic",
                 initial_state=f"INFO: Starting JuicePass Proxy {VERSION}",
-                expire_after=0, # Keep last message available
+                expire_after=0,  # Keep last message available
+            ),
+            "mitm_status": JuiceboxMQTTSensor(
+                name="MITM Status",
+                enabled_by_default=True,
+                icon="mdi:lan",
+                entity_category="diagnostic",
+                initial_state="Initializing...",
+                expire_after=0,
+            ),
+            "udpc_status": JuiceboxMQTTSensor(
+                name="UDPC Updater Status",
+                enabled_by_default=True,
+                icon="mdi:update",
+                entity_category="diagnostic",
+                initial_state="Initializing...",
+                expire_after=0,
             ),
             "data_from_juicebox": JuiceboxMQTTSensor(
                 name="Data from JuiceBox",
                 experimental=True,
                 enabled_by_default=False,
                 entity_category="diagnostic",
-                expire_after=0, # Keep last message available
+                expire_after=0,  # Keep last message available
             ),
             "data_from_enelx": JuiceboxMQTTSensor(
                 name="Data from EnelX",
                 experimental=True,
                 enabled_by_default=False,
                 entity_category="diagnostic",
-                expire_after=0, # Keep last message available
+                expire_after=0,  # Keep last message available
             ),
             "send_to_juicebox": JuiceboxMQTTText(
                 name="Send Command to JuiceBox",
@@ -431,14 +453,16 @@ class JuiceboxMQTTHandler:
                 enabled_by_default=False,
             ),
         }
-        
-        _LOGGER.info("Checking for initial_states on config")        
+
+        _LOGGER.info("Checking for initial_states on config")
         for key in self._entities.keys():
-            initial_state = self._config.get_device(self._juicebox_id, key + "_initial_state", None)
+            initial_state = self._config.get_device(
+                self._juicebox_id, key + "_initial_state", None
+            )
             if initial_state:
                 _LOGGER.info(f"got initial_state on config : {key} -> {initial_state}")
                 self._entities[key].add_kwargs(initial_state=initial_state)
-                
+
         for entity in self._entities.values():
             entity.add_kwargs(
                 juicebox_id=self._juicebox_id,
@@ -451,7 +475,7 @@ class JuiceboxMQTTHandler:
 
     def get_entity(self, name):
         return self._entities[name]
-        
+
     async def start(self):
         _LOGGER.info("Starting JuiceboxMQTTHandler")
 
@@ -474,6 +498,26 @@ class JuiceboxMQTTHandler:
             if entity.entity_type in MQTT_SENDING_ENTITIES:
                 entity.add_kwargs(mitm_handler=mitm_handler)
 
+    async def publish_task_status(self, task_key: str, message: str):
+        """
+        Publish a status message to a diagnostic MQTT sensor for a given task.
+        task_key: one of 'juicebox_mitm', 'juicebox_udpcupdater', or a custom key.
+        """
+        mapping = {
+            "juicebox_mitm": "mitm_status",
+            "mitm": "mitm_status",
+            "juicebox_udpcupdater": "udpc_status",
+            "udpc": "udpc_status",
+        }
+        entity_key = mapping.get(task_key, None)
+        if entity_key and entity_key in self._entities:
+            try:
+                await self._entities[entity_key].set_state(f"[{task_key}] {message}")
+            except Exception as e:
+                _LOGGER.debug(
+                    f"Failed to publish task status for {task_key}: {e.__class__.__qualname__}: {e}"
+                )
+
     async def _udp_mitm_oserror_message_parse(self, data):
         message = {"type": "udp_mitm_oserror"}
         err_data = str(data).split("|")
@@ -488,23 +532,23 @@ class JuiceboxMQTTHandler:
         if key in message:
             self._config.update_device_value(self._juicebox_id, key, message[key])
             await self._config.write_if_changed()
-            
+
     async def _basic_message_publish(self, message):
         _LOGGER.debug(f"Publish {message.get('type').title()} Message: {message}")
 
         # try:
         attributes = {}
-        
+
         # This values are usefull when JPP starts again to start fast
         await self._store_if_on_message(message, "current_rating")
         await self._store_if_on_message(message, "current_max_offline")
-        
+
         for k in message:
             entity = self._entities.get(k, None)
             if entity and (entity.experimental is False or self._experimental is True):
 
                 await entity.set_state(message.get(k, None))
-                    
+
             attributes[k] = message.get(k, None)
         if (
             self._experimental
@@ -551,30 +595,36 @@ class JuiceboxMQTTHandler:
     async def local_mitm_handler(self, data, decoded_message):
         message = None
         try:
-            _LOGGER.debug(f"From JuiceBox: {data} decoded={decoded_message}")            
+            _LOGGER.debug(f"From JuiceBox: {data} decoded={decoded_message}")
             if "JuiceboxMITM_OSERROR" in str(data):
                 message = await self._udp_mitm_oserror_message_parse(data)
-                
+
             # Now using the classes as priority over older code
             elif isinstance(decoded_message, JuiceboxEncryptedMessage):
-                _LOGGER.warning(f"Encrypted messages will not be sent to mqtt - {decoded_message}")
+                _LOGGER.warning(
+                    f"Encrypted messages will not be sent to mqtt - {decoded_message}"
+                )
             elif isinstance(decoded_message, JuiceboxStatusMessage):
                 message = decoded_message.to_simple_format()
             elif isinstance(decoded_message, JuiceboxDebugMessage):
                 message = decoded_message.to_simple_format()
             else:
-                _LOGGER.error(f"should never arrive here, message is unsupported {data} {decoded_message}")
-        
+                _LOGGER.error(
+                    f"should never arrive here, message is unsupported {data} {decoded_message}"
+                )
+
             _LOGGER.debug(f"decode/parsed message = {message}")
-            
+
             if message:
                 # Something is wrong if device is changed
                 # as the entities use the juicebox_id as unique_id this should not happen
                 if "serial" in message:
-                   if message["serial"] != self._juicebox_id:
-                       _LOGGER.error(f"serial {message['serial']} on received message does not match juicebox_id {self._juicebox_id}")
-                       # For now just give the error, but will be better to dont send values on entities and return 
-            
+                    if message["serial"] != self._juicebox_id:
+                        _LOGGER.error(
+                            f"serial {message['serial']} on received message does not match juicebox_id {self._juicebox_id}"
+                        )
+                        # For now just give the error, but will be better to dont send values on entities and return
+
                 await self._basic_message_publish(message)
 
             return data

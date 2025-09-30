@@ -66,6 +66,10 @@ class JuiceboxMITM:
             f"Starting JuiceboxMITM at {self._jpp_addr[0]}:{self._jpp_addr[1]} reuse_port={self._reuse_port}"
         )
         _LOGGER.debug(f"EnelX: {self._enelx_addr[0]}:{self._enelx_addr[1]}")
+        if self._mqtt_handler:
+            await self._mqtt_handler.publish_task_status(
+                "juicebox_mitm", "JuiceboxMITM Starting"
+            )
 
         await self._connect()
 
@@ -74,6 +78,10 @@ class JuiceboxMITM:
             self._dgram.close()
             self._dgram = None
             await asyncio.sleep(3)
+        if self._mqtt_handler:
+            await self._mqtt_handler.publish_task_status(
+                "juicebox_mitm", "JuiceboxMITM Closed"
+            )
 
     async def _connect(self):
         connect_attempt = 1
@@ -103,6 +111,11 @@ class JuiceboxMITM:
                     "JuiceboxMITM UDP Server Startup Error. Reconnecting. "
                     f"({e.__class__.__qualname__}: {e})"
                 )
+                if self._mqtt_handler:
+                    await self._mqtt_handler.publish_task_status(
+                        "juicebox_mitm",
+                        "JuiceboxMITM UDP Server Startup Error. Reconnecting.",
+                    )
                 await self._add_error()
                 self._dgram = None
                 pass
@@ -114,6 +127,10 @@ class JuiceboxMITM:
                 self._mitm_loop(), name="mitm_loop"
             )
         _LOGGER.debug(f"JuiceboxMITM Connected. {self._jpp_addr}")
+        if self._mqtt_handler:
+            await self._mqtt_handler.publish_task_status(
+                "juicebox_mitm", "JuiceboxMITM Connected"
+            )
 
     async def _mitm_loop(self) -> None:
         _LOGGER.debug("Starting JuiceboxMITM Loop")
@@ -129,6 +146,10 @@ class JuiceboxMITM:
                     data, remote_addr = await self._dgram.recv()
             except asyncio_dgram.TransportClosed:
                 _LOGGER.warning("JuiceboxMITM Connection Lost.")
+                if self._mqtt_handler:
+                    await self._mqtt_handler.publish_task_status(
+                        "juicebox_mitm", "JuiceboxMITM Connection Lost."
+                    )
                 await self._add_error()
                 self._dgram = None
                 continue
@@ -137,6 +158,11 @@ class JuiceboxMITM:
                     f"No Message Received after {MITM_RECV_TIMEOUT} sec. "
                     f"({e.__class__.__qualname__}: {e})"
                 )
+                if self._mqtt_handler:
+                    await self._mqtt_handler.publish_task_status(
+                        "juicebox_mitm",
+                        f"No message after {MITM_RECV_TIMEOUT}s. Reconnecting.",
+                    )
                 await self._add_error()
                 self._dgram = None
                 continue
@@ -148,6 +174,11 @@ class JuiceboxMITM:
                     f"MITM Handler timeout after {MITM_HANDLER_TIMEOUT} sec. "
                     f"({e.__class__.__qualname__}: {e})"
                 )
+                if self._mqtt_handler:
+                    await self._mqtt_handler.publish_task_status(
+                        "juicebox_mitm",
+                        f"MITM Handler timeout after {MITM_HANDLER_TIMEOUT}s.",
+                    )
                 await self._add_error()
                 self._dgram = None
         raise ChildProcessError(

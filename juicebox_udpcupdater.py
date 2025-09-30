@@ -22,6 +22,7 @@ class JuiceboxUDPCUpdater:
         udpc_port=8047,
         telnet_timeout=None,
         loglevel=None,
+        mqtt_handler=None,
     ):
         if loglevel is not None:
             _LOGGER.setLevel(loglevel)
@@ -37,9 +38,14 @@ class JuiceboxUDPCUpdater:
         self._error_timestamp_list = []
         self._stop_event = asyncio.Event()
         self._supervisor_task = None
+        self._mqtt_handler = mqtt_handler
 
     async def start(self):
         _LOGGER.info("Starting JuiceboxUDPCUpdater")
+        if self._mqtt_handler:
+            await self._mqtt_handler.publish_task_status(
+                "juicebox_udpcupdater", "JuiceboxUDPCUpdater Starting"
+            )
         # Run a resilient supervisor loop that keeps trying until closed
         while not self._stop_event.is_set():
             try:
@@ -57,12 +63,22 @@ class JuiceboxUDPCUpdater:
                     "JuiceboxUDPCUpdater encountered an error, will retry. "
                     f"({e.__class__.__qualname__}: {e})"
                 )
+                if self._mqtt_handler:
+                    await self._mqtt_handler.publish_task_status(
+                        "juicebox_udpcupdater",
+                        "JuiceboxUDPCUpdater encountered an error, will retry.",
+                    )
                 await self._add_error()
                 await asyncio.sleep(5)
             except Exception as e:
                 _LOGGER.exception(
                     f"JuiceboxUDPCUpdater unexpected error; retrying. {e.__class__.__qualname__}: {e}"
                 )
+                if self._mqtt_handler:
+                    await self._mqtt_handler.publish_task_status(
+                        "juicebox_udpcupdater",
+                        "JuiceboxUDPCUpdater unexpected error; retrying.",
+                    )
                 await self._add_error()
                 await asyncio.sleep(5)
             finally:
@@ -142,6 +158,11 @@ class JuiceboxUDPCUpdater:
             _LOGGER.warning(
                 "JuiceboxUDPCUpdater: Unable to connect to Telnet. Will retry."
             )
+            if self._mqtt_handler:
+                await self._mqtt_handler.publish_task_status(
+                    "juicebox_udpcupdater",
+                    "JuiceboxUDPCUpdater: Unable to connect to Telnet. Will retry.",
+                )
             return
         # Start the UDPC update loop as a background task if not already running
         if self._udpc_update_loop_task is None or self._udpc_update_loop_task.done():
@@ -149,6 +170,10 @@ class JuiceboxUDPCUpdater:
                 self._udpc_update_loop(), name="udpc_update_loop"
             )
         _LOGGER.info("JuiceboxUDPCUpdater Connected to Juicebox Telnet")
+        if self._mqtt_handler:
+            await self._mqtt_handler.publish_task_status(
+                "juicebox_udpcupdater", "JuiceboxUDPCUpdater Connected to Telnet"
+            )
 
     async def _udpc_update_loop(self):
         _LOGGER.debug("Starting JuiceboxUDPCUpdater Loop")
@@ -179,6 +204,11 @@ class JuiceboxUDPCUpdater:
             self._error_count,
             ERROR_LOOKBACK_MIN,
         )
+        if self._mqtt_handler:
+            await self._mqtt_handler.publish_task_status(
+                "juicebox_udpcupdater",
+                "JuiceboxUDPCUpdater hit error threshold. Backing off.",
+            )
         # Reset counters and let supervisor retry after a short pause
         self._error_count = 0
         self._error_timestamp_list.clear()
