@@ -151,6 +151,12 @@ async def get_enelx_server_port(juicebox_host, telnet_port, telnet_timeout=None)
             f"({e.__class__.__qualname__}: {e})"
         )
         return None
+    except OSError as e:
+        _LOGGER.warning(
+            "Error in getting EnelX Server and Port via Telnet. "
+            f"({e.__class__.__qualname__}: {e})"
+        )
+        return None
     return None
 
 
@@ -171,6 +177,12 @@ async def get_juicebox_id(juicebox_host, telnet_port, telnet_timeout=None):
         )
         return None
     except ConnectionResetError as e:
+        _LOGGER.warning(
+            "Error in getting JuiceBox ID via Telnet. "
+            f"({e.__class__.__qualname__}: {e})"
+        )
+        return None
+    except OSError as e:
         _LOGGER.warning(
             "Error in getting JuiceBox ID via Telnet. "
             f"({e.__class__.__qualname__}: {e})"
@@ -204,6 +216,11 @@ async def send_reboot_command(juicebox_host, telnet_port, mqtt_handler, telnet_t
             f"({e.__class__.__qualname__}: {e})"
         )
     except ConnectionResetError as e:
+        _LOGGER.warning(
+            "Error in sending reboot command via Telnet. "
+            f"({e.__class__.__qualname__}: {e})"
+        )
+    except OSError as e:
         _LOGGER.warning(
             "Error in sending reboot command via Telnet. "
             f"({e.__class__.__qualname__}: {e})"

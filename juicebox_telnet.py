@@ -65,6 +65,9 @@ class JuiceboxTelnet:
                 raise TimeoutError("Telnet Connection Failed") from e
             except ConnectionResetError as e:
                 raise ConnectionResetError("Telnet Connection Failed") from e
+            except OSError as e:
+                # Surface a consistent error for callers while preserving context
+                raise OSError(f"Telnet Connection Failed: {e}") from e
         # _LOGGER.debug("Telnet Opened")
         return True
 

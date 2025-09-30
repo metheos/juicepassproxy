@@ -83,6 +83,15 @@ class JuiceboxUDPCUpdater:
                 await self._telnet.close()
                 self._telnet = None
                 pass
+            except OSError as e:
+                _LOGGER.warning(
+                    "JuiceboxUDPCUpdater Telnet OS Error. Reconnecting. "
+                    f"({e.__class__.__qualname__}: {e})"
+                )
+                await self._add_error()
+                await self._telnet.close()
+                self._telnet = None
+                pass
         if self._telnet is None:
             raise ChildProcessError("JuiceboxUDPCUpdater: Unable to connect to Telnet.")
         if self._udpc_update_loop_task is None or self._udpc_update_loop_task.done():
