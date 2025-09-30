@@ -49,12 +49,12 @@ class JuiceboxUDPCUpdater:
         # Run a resilient supervisor loop that keeps trying until closed
         while not self._stop_event.is_set():
             try:
-                await self._connect()
-                if self._udpc_update_loop_task is not None:
+                connected = await self._connect()
+                if connected and self._udpc_update_loop_task is not None:
                     await self._udpc_update_loop_task
                 else:
-                    # Couldn't start the loop; wait then retry
-                    await asyncio.sleep(self._default_sleep_interval)
+                    # Couldn't start the loop; quick retry
+                    await asyncio.sleep(5)
             except asyncio.CancelledError:
                 # Graceful shutdown
                 break
@@ -108,7 +108,7 @@ class JuiceboxUDPCUpdater:
             await self._telnet.close()
             self._telnet = None
 
-    async def _connect(self):
+    async def _connect(self) -> bool:
         connect_attempt = 1
         while (
             self._telnet is None
@@ -163,7 +163,7 @@ class JuiceboxUDPCUpdater:
                     "juicebox_udpcupdater",
                     "JuiceboxUDPCUpdater: Unable to connect to Telnet. Will retry.",
                 )
-            return
+            return False
         # Start the UDPC update loop as a background task if not already running
         if self._udpc_update_loop_task is None or self._udpc_update_loop_task.done():
             self._udpc_update_loop_task = asyncio.create_task(
@@ -174,6 +174,7 @@ class JuiceboxUDPCUpdater:
             await self._mqtt_handler.publish_task_status(
                 "juicebox_udpcupdater", "JuiceboxUDPCUpdater Connected to Telnet"
             )
+        return True
 
     async def _udpc_update_loop(self):
         _LOGGER.debug("Starting JuiceboxUDPCUpdater Loop")

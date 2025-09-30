@@ -54,6 +54,7 @@ class JuiceboxMITM:
         self._dgram = None
         self._error_count = 0
         self._error_timestamp_list = []
+        self._stop_event = asyncio.Event()
         # Last command sent to juicebox device
         self._last_command = None
         # Last message received from juicebox device
@@ -71,9 +72,60 @@ class JuiceboxMITM:
                 "juicebox_mitm", "JuiceboxMITM Starting"
             )
 
-        await self._connect()
+        # Resilient supervisor loop; never raise out of start
+        while not self._stop_event.is_set():
+            try:
+                await self._connect()
+                if self._mitm_loop_task is not None:
+                    await self._mitm_loop_task
+                else:
+                    # If _connect couldn't start loop, wait a bit and retry
+                    await asyncio.sleep(5)
+            except asyncio.CancelledError:
+                break
+            except ChildProcessError as e:
+                _LOGGER.warning(
+                    "JuiceboxMITM encountered an error, will retry. (%s: %s)",
+                    e.__class__.__qualname__,
+                    e,
+                )
+                if self._mqtt_handler:
+                    await self._mqtt_handler.publish_task_status(
+                        "juicebox_mitm", "JuiceboxMITM encountered an error, retrying."
+                    )
+                await self._add_error()
+                await asyncio.sleep(5)
+            except Exception as e:
+                _LOGGER.exception(
+                    "JuiceboxMITM unexpected error; retrying. %s: %s",
+                    e.__class__.__qualname__,
+                    e,
+                )
+                if self._mqtt_handler:
+                    await self._mqtt_handler.publish_task_status(
+                        "juicebox_mitm", "JuiceboxMITM unexpected error; retrying."
+                    )
+                await self._add_error()
+                await asyncio.sleep(5)
+            finally:
+                # Ensure socket cleanup between iterations
+                if self._dgram is not None:
+                    try:
+                        self._dgram.close()
+                    except Exception:
+                        pass
+                    self._dgram = None
+                await asyncio.sleep(1)
 
     async def close(self):
+        self._stop_event.set()
+        if self._mitm_loop_task is not None and not self._mitm_loop_task.done():
+            self._mitm_loop_task.cancel()
+            try:
+                await self._mitm_loop_task
+            except Exception:
+                pass
+            self._mitm_loop_task = None
         if self._dgram is not None:
             self._dgram.close()
             self._dgram = None
@@ -121,6 +173,12 @@ class JuiceboxMITM:
                 pass
             await asyncio.sleep(5)
         if self._dgram is None:
+            # Surface as handled condition; supervisor will retry
+            if self._mqtt_handler:
+                await self._mqtt_handler.publish_task_status(
+                    "juicebox_mitm",
+                    "JuiceboxMITM: Unable to start MITM UDP Server. Retrying.",
+                )
             raise ChildProcessError("JuiceboxMITM: Unable to start MITM UDP Server.")
         if self._mitm_loop_task is None or self._mitm_loop_task.done():
             self._mitm_loop_task = asyncio.create_task(
@@ -134,11 +192,24 @@ class JuiceboxMITM:
 
     async def _mitm_loop(self) -> None:
         _LOGGER.debug("Starting JuiceboxMITM Loop")
-        while self._error_count < MAX_ERROR_COUNT:
+        while not self._stop_event.is_set() and self._error_count < MAX_ERROR_COUNT:
             if self._dgram is None:
                 _LOGGER.warning("JuiceboxMITM Reconnecting.")
                 await self._add_error()
-                await self._connect()
+                try:
+                    await self._connect()
+                except ChildProcessError as e:
+                    _LOGGER.warning(
+                        "JuiceboxMITM connect failed; will retry. (%s: %s)",
+                        e.__class__.__qualname__,
+                        e,
+                    )
+                    if self._mqtt_handler:
+                        await self._mqtt_handler.publish_task_status(
+                            "juicebox_mitm",
+                            "JuiceboxMITM connect failed; will retry.",
+                        )
+                    await asyncio.sleep(5)
                 continue
             # _LOGGER.debug("Listening")
             try:
@@ -181,10 +252,18 @@ class JuiceboxMITM:
                     )
                 await self._add_error()
                 self._dgram = None
-        raise ChildProcessError(
-            f"JuiceboxMITM: More than {self._error_count} errors in the last "
-            f"{ERROR_LOOKBACK_MIN} min."
+        _LOGGER.warning(
+            "JuiceboxMITM hit error threshold (%d in last %d min). Backing off.",
+            self._error_count,
+            ERROR_LOOKBACK_MIN,
         )
+        if self._mqtt_handler:
+            await self._mqtt_handler.publish_task_status(
+                "juicebox_mitm", "JuiceboxMITM hit error threshold. Backing off."
+            )
+        # Reset counters and allow supervisor to retry
+        self._error_count = 0
+        self._error_timestamp_list.clear()
 
     def _booted_in_less_than(self, seconds):
         return self._boot_timestamp and ((time.time() - self._boot_timestamp) < seconds)
