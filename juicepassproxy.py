@@ -191,12 +191,14 @@ async def get_juicebox_id(juicebox_host, telnet_port, telnet_timeout=None):
     return None
 
 
-async def send_reboot_command(juicebox_host, telnet_port, mqtt_handler, telnet_timeout, udpc_updater):
+async def send_reboot_command(
+    juicebox_host, telnet_port, mqtt_handler, telnet_timeout, udpc_updater
+):
     try:
         entity_values = mqtt_handler.get_entity_values()
-        
+
         # Validate the 'status' of the juicebox is 'Unplugged'
-        if entity_values.get('status') == 'Unplugged':
+        if entity_values.get("status") == "Unplugged":
             if udpc_updater is not None:
                 await udpc_updater.close()
                 _LOGGER.info("UDPC Updater stopped.")
@@ -209,7 +211,9 @@ async def send_reboot_command(juicebox_host, telnet_port, mqtt_handler, telnet_t
                 await tn.send_command("reboot")
                 _LOGGER.info("Reboot command sent successfully.")
         else:
-            _LOGGER.warning("Juicebox status is not 'Unplugged'. Reboot command not sent.")
+            _LOGGER.warning(
+                "Juicebox status is not 'Unplugged'. Reboot command not sent."
+            )
     except TimeoutError as e:
         _LOGGER.warning(
             "Error in sending reboot command via Telnet. "
@@ -339,7 +343,9 @@ async def parse_args():
     )
 
     parser.add_argument(
-        "--disable_reuse_port", action="store_true", help="Disable port reuse for server socket (default: reuse_port)"
+        "--disable_reuse_port",
+        action="store_true",
+        help="Disable port reuse for server socket (default: reuse_port)",
     )
 
     parser.add_argument(
@@ -424,16 +430,18 @@ async def parse_args():
 
 async def main():
     args = await parse_args()
-    log_handlers = [ logging.StreamHandler() ]
-    enable_file_log = (len(args.log_loc) > 0) and (args.log_loc != 'none')
+    log_handlers = [logging.StreamHandler()]
+    enable_file_log = (len(args.log_loc) > 0) and (args.log_loc != "none")
     log_loc = Path(args.log_loc)
     if enable_file_log:
         log_loc.mkdir(parents=True, exist_ok=True)
         log_loc = log_loc.joinpath(LOGFILE)
         log_loc.touch(exist_ok=True)
-        log_handlers.append(TimedRotatingFileHandler(
+        log_handlers.append(
+            TimedRotatingFileHandler(
                 log_loc, when="midnight", backupCount=DAYS_TO_KEEP_LOGS
-            ))
+            )
+        )
     logging.basicConfig(
         format=LOG_FORMAT,
         datefmt=LOG_DATE_FORMAT,
@@ -621,7 +629,7 @@ async def main():
             loglevel=_LOGGER.getEffectiveLevel(),
             # windows users are having trouble with reuse_port=True
             # TODO find a safe way to detect windows and change the default value
-            reuse_port=config.get("reuse_port", not args.disable_reuse_port), 
+            reuse_port=config.get("reuse_port", not args.disable_reuse_port),
         )
         await mitm_handler.set_local_mitm_handler(mqtt_handler.local_mitm_handler)
         await mitm_handler.set_remote_mitm_handler(mqtt_handler.remote_mitm_handler)
@@ -648,7 +656,18 @@ async def main():
 
         if args.cron_reboot_schedule:
             jpp_task_list.append(
-                asyncio.create_task(scheduled_task(args.cron_reboot_schedule, send_reboot_command, args.juicebox_host, args.telnet_port, mqtt_handler, telnet_timeout, udpc_updater), name="scheduled_task")
+                asyncio.create_task(
+                    scheduled_task(
+                        args.cron_reboot_schedule,
+                        send_reboot_command,
+                        args.juicebox_host,
+                        args.telnet_port,
+                        mqtt_handler,
+                        telnet_timeout,
+                        udpc_updater,
+                    ),
+                    name="scheduled_task",
+                )
             )
 
         try:
