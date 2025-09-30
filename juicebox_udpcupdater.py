@@ -78,7 +78,10 @@ class JuiceboxUDPCUpdater:
     async def close(self):
         self._stop_event.set()
         # Cancel background loop if running
-        if self._udpc_update_loop_task is not None and not self._udpc_update_loop_task.done():
+        if (
+            self._udpc_update_loop_task is not None
+            and not self._udpc_update_loop_task.done()
+        ):
             self._udpc_update_loop_task.cancel()
             try:
                 await self._udpc_update_loop_task
@@ -136,7 +139,9 @@ class JuiceboxUDPCUpdater:
                 self._telnet = None
                 pass
         if self._telnet is None:
-            _LOGGER.warning("JuiceboxUDPCUpdater: Unable to connect to Telnet. Will retry.")
+            _LOGGER.warning(
+                "JuiceboxUDPCUpdater: Unable to connect to Telnet. Will retry."
+            )
             return
         # Start the UDPC update loop as a background task if not already running
         if self._udpc_update_loop_task is None or self._udpc_update_loop_task.done():
