@@ -135,7 +135,7 @@ class JuiceboxUDPCUpdater:
                 await self._add_error()
                 await self._telnet.close()
                 self._telnet = None
-                pass
+                await asyncio.sleep(3)
             except ConnectionResetError as e:
                 _LOGGER.warning(
                     "JuiceboxUDPCUpdater Telnet Connection Error. Reconnecting. "
@@ -144,7 +144,7 @@ class JuiceboxUDPCUpdater:
                 await self._add_error()
                 await self._telnet.close()
                 self._telnet = None
-                pass
+                await asyncio.sleep(3)
             except OSError as e:
                 _LOGGER.warning(
                     "JuiceboxUDPCUpdater Telnet OS Error. Reconnecting. "
@@ -153,7 +153,7 @@ class JuiceboxUDPCUpdater:
                 await self._add_error()
                 await self._telnet.close()
                 self._telnet = None
-                pass
+                await asyncio.sleep(3)
         if self._telnet is None:
             _LOGGER.warning(
                 "JuiceboxUDPCUpdater: Unable to connect to Telnet. Will retry."
@@ -184,6 +184,34 @@ class JuiceboxUDPCUpdater:
                 _LOGGER.warning(
                     "JuiceboxUDPCUpdater Telnet Connection Lost. Reconnecting."
                 )
+                if self._mqtt_handler:
+                    await self._mqtt_handler.publish_task_status(
+                        "juicebox_udpcupdater",
+                        "JuiceboxUDPCUpdater Telnet lost. Reconnecting.",
+                    )
+                await self._connect()
+                continue
+            # Proactively verify connection health each cycle (heartbeat in open())
+            try:
+                await self._telnet.open()
+            except (TimeoutError, ConnectionResetError, OSError) as e:
+                _LOGGER.warning(
+                    "JuiceboxUDPCUpdater Telnet not healthy; reconnecting. %s: %s",
+                    e.__class__.__qualname__,
+                    e,
+                )
+                await self._add_error()
+                try:
+                    await self._telnet.close()
+                except Exception:
+                    pass
+                self._telnet = None
+                if self._mqtt_handler:
+                    await self._mqtt_handler.publish_task_status(
+                        "juicebox_udpcupdater",
+                        "JuiceboxUDPCUpdater Telnet not healthy; reconnecting.",
+                    )
+                await asyncio.sleep(3)
                 await self._connect()
                 continue
             try:
