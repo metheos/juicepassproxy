@@ -40,14 +40,6 @@ from juicebox_config import JuiceboxConfig
 from croniter import croniter
 from datetime import datetime, timezone
 
-logging.basicConfig(
-    format=LOG_FORMAT,
-    datefmt=LOG_DATE_FORMAT,
-    level=DEFAULT_LOGLEVEL,
-    handlers=[
-        logging.StreamHandler(),
-    ],
-)
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -199,9 +191,6 @@ async def send_reboot_command(
 
         # Validate the 'status' of the juicebox is 'Unplugged'
         if entity_values.get("status") == "Unplugged":
-            if udpc_updater is not None:
-                await udpc_updater.close()
-                _LOGGER.info("UDPC Updater stopped.")
             async with JuiceboxTelnet(
                 juicebox_host,
                 telnet_port,
@@ -511,9 +500,15 @@ async def main():
         log_loc.touch(exist_ok=True)
         log_handlers.append(
             TimedRotatingFileHandler(
-                log_loc, when="midnight", backupCount=DAYS_TO_KEEP_LOGS
+                log_loc,
+                when="midnight",
+                backupCount=DAYS_TO_KEEP_LOGS,
+                encoding="utf-8",
             )
         )
+    # Ensure handler levels are consistent
+    for h in log_handlers:
+        h.setLevel(DEFAULT_LOGLEVEL)
     logging.basicConfig(
         format=LOG_FORMAT,
         datefmt=LOG_DATE_FORMAT,
@@ -521,6 +516,8 @@ async def main():
         handlers=log_handlers,
         force=True,
     )
+    # Capture warnings into logging
+    logging.captureWarnings(True)
     if args.debug:
         _LOGGER.setLevel(logging.DEBUG)
     _LOGGER.warning(
