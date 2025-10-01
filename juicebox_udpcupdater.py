@@ -142,7 +142,7 @@ class JuiceboxUDPCUpdater:
         # Reset error counters so reconnect isn't blocked after resume
         self._error_count = 0
         self._error_timestamp_list.clear()
-        
+
         # Cancel background loop if running
         if (
             self._udpc_update_loop_task is not None
@@ -162,7 +162,7 @@ class JuiceboxUDPCUpdater:
             self._udpc_update_loop_task = None
         else:
             _LOGGER.info("No UDPC update loop task to cancel")
-            
+
         # Close Telnet to free the connection
         if self._telnet is not None:
             _LOGGER.info("Closing Telnet connection...")
@@ -174,12 +174,12 @@ class JuiceboxUDPCUpdater:
             self._telnet = None
         else:
             _LOGGER.info("No Telnet connection to close")
-            
+
         _LOGGER.info(
             "JuiceboxUDPCUpdater paused%s",
             f" for {int(seconds)}s" if seconds is not None else "",
         )
-        
+
         if self._mqtt_handler:
             try:
                 await self._mqtt_handler.publish_task_status(
@@ -189,7 +189,7 @@ class JuiceboxUDPCUpdater:
                 _LOGGER.info("Published UDPC pause status to MQTT")
             except Exception as e:
                 _LOGGER.warning("Failed to publish UDPC pause status: %s", e)
-        
+
         _LOGGER.info("JuiceboxUDPCUpdater.pause() completed")
 
     async def resume(self):
