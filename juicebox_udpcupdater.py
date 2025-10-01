@@ -150,15 +150,9 @@ class JuiceboxUDPCUpdater:
         ):
             _LOGGER.info("Cancelling UDPC update loop task...")
             self._udpc_update_loop_task.cancel()
-            try:
-                # Add timeout to prevent hanging here
-                async with asyncio.timeout(5):
-                    await self._udpc_update_loop_task
-                _LOGGER.info("UDPC update loop task cancelled successfully")
-            except asyncio.TimeoutError:
-                _LOGGER.warning("Timeout waiting for UDPC update loop task to cancel")
-            except Exception as e:
-                _LOGGER.info("UDPC update loop task cancelled with exception: %s", e)
+            _LOGGER.info(
+                "UDPC update loop task cancel() called - not waiting for completion"
+            )
             self._udpc_update_loop_task = None
         else:
             _LOGGER.info("No UDPC update loop task to cancel")
