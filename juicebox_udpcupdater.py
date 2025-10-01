@@ -138,6 +138,9 @@ class JuiceboxUDPCUpdater:
         """
         self._paused = True
         self._paused_until = (time.time() + seconds) if seconds is not None else None
+        # Reset error counters so reconnect isn't blocked after resume
+        self._error_count = 0
+        self._error_timestamp_list.clear()
         # Cancel background loop if running
         if (
             self._udpc_update_loop_task is not None
@@ -171,6 +174,9 @@ class JuiceboxUDPCUpdater:
         if self._paused:
             self._paused = False
             self._paused_until = None
+            # Reset error counters on resume just in case
+            self._error_count = 0
+            self._error_timestamp_list.clear()
             _LOGGER.info("JuiceboxUDPCUpdater resumed")
             if self._mqtt_handler:
                 await self._mqtt_handler.publish_task_status(

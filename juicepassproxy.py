@@ -188,6 +188,10 @@ async def send_reboot_command(
 ):
     try:
         entity_values = mqtt_handler.get_entity_values()
+        _LOGGER.info(
+            "send_reboot_command invoked; current status=%s",
+            entity_values.get("status"),
+        )
 
         # Validate the 'status' of the juicebox is 'Unplugged'
         if entity_values.get("status") == "Unplugged":
@@ -197,8 +201,8 @@ async def send_reboot_command(
             # from acquiring the prompt reliably. Pause here and resume shortly after issuing reboot.
             if udpc_updater is not None:
                 try:
-                    await udpc_updater.pause()
-                    _LOGGER.info("Paused UDPC updater before reboot")
+                    await udpc_updater.pause(12)
+                    _LOGGER.info("Paused UDPC updater for 12s before reboot")
                 except Exception as e:
                     _LOGGER.warning(
                         "Failed to pause UDPC updater prior to reboot: %s: %s",
@@ -216,6 +220,7 @@ async def send_reboot_command(
                 ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
                 _LOGGER.info(f"Scheduled reboot command sent at {ts}")
                 try:
+                    _LOGGER.info("Publishing last_reboot timestamp: %s", ts)
                     await mqtt_handler.get_entity("last_reboot").set_state(ts)
                 except Exception as e:
                     _LOGGER.debug(
@@ -227,19 +232,6 @@ async def send_reboot_command(
                     )
                 except Exception:
                     pass
-            # Schedule UDPC updater resume 10 seconds after sending reboot
-            # Give the device a moment to accept the reboot and for Telnet to drop, then resume updater.
-            # The resume call is delayed to avoid reconnect thrash during reboot.
-            if udpc_updater is not None:
-                try:
-                    asyncio.create_task(udpc_updater.delayed_resume(10))
-                    _LOGGER.info("Scheduled UDPC updater to resume in 10s")
-                except Exception as e:
-                    _LOGGER.warning(
-                        "Failed to schedule UDPC updater resume: %s: %s",
-                        e.__class__.__qualname__,
-                        e,
-                    )
             return True
         else:
             _LOGGER.warning(
