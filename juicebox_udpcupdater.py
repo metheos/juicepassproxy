@@ -136,38 +136,61 @@ class JuiceboxUDPCUpdater:
         If 'seconds' is provided, auto-resume after that many seconds; otherwise, remain
         paused until resume() is called.
         """
+        _LOGGER.info("JuiceboxUDPCUpdater.pause() called")
         self._paused = True
         self._paused_until = (time.time() + seconds) if seconds is not None else None
         # Reset error counters so reconnect isn't blocked after resume
         self._error_count = 0
         self._error_timestamp_list.clear()
+        
         # Cancel background loop if running
         if (
             self._udpc_update_loop_task is not None
             and not self._udpc_update_loop_task.done()
         ):
+            _LOGGER.info("Cancelling UDPC update loop task...")
             self._udpc_update_loop_task.cancel()
             try:
-                await self._udpc_update_loop_task
-            except Exception:
-                pass
+                # Add timeout to prevent hanging here
+                async with asyncio.timeout(5):
+                    await self._udpc_update_loop_task
+                _LOGGER.info("UDPC update loop task cancelled successfully")
+            except asyncio.TimeoutError:
+                _LOGGER.warning("Timeout waiting for UDPC update loop task to cancel")
+            except Exception as e:
+                _LOGGER.info("UDPC update loop task cancelled with exception: %s", e)
             self._udpc_update_loop_task = None
+        else:
+            _LOGGER.info("No UDPC update loop task to cancel")
+            
         # Close Telnet to free the connection
         if self._telnet is not None:
+            _LOGGER.info("Closing Telnet connection...")
             try:
                 await self._telnet.close()
-            except Exception:
-                pass
+                _LOGGER.info("Telnet connection closed")
+            except Exception as e:
+                _LOGGER.info("Telnet close exception: %s", e)
             self._telnet = None
+        else:
+            _LOGGER.info("No Telnet connection to close")
+            
         _LOGGER.info(
             "JuiceboxUDPCUpdater paused%s",
             f" for {int(seconds)}s" if seconds is not None else "",
         )
+        
         if self._mqtt_handler:
-            await self._mqtt_handler.publish_task_status(
-                "juicebox_udpcupdater",
-                f"JuiceboxUDPCUpdater paused{f' for {int(seconds)}s' if seconds is not None else ''}",
-            )
+            try:
+                await self._mqtt_handler.publish_task_status(
+                    "juicebox_udpcupdater",
+                    f"JuiceboxUDPCUpdater paused{f' for {int(seconds)}s' if seconds is not None else ''}",
+                )
+                _LOGGER.info("Published UDPC pause status to MQTT")
+            except Exception as e:
+                _LOGGER.warning("Failed to publish UDPC pause status: %s", e)
+        
+        _LOGGER.info("JuiceboxUDPCUpdater.pause() completed")
 
     async def resume(self):
         """Resume the updater if previously paused."""

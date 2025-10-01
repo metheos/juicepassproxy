@@ -203,8 +203,13 @@ async def send_reboot_command(
             if udpc_updater is not None:
                 _LOGGER.info("Attempting to pause UDPC updater...")
                 try:
-                    await udpc_updater.pause()
-                    _LOGGER.info("Paused UDPC updater before reboot (no auto-resume)")
+                    # Add timeout to prevent hanging indefinitely
+                    async with asyncio.timeout(10):
+                        await udpc_updater.pause()
+                    _LOGGER.info("Successfully paused UDPC updater before reboot")
+                except asyncio.TimeoutError:
+                    _LOGGER.error("CRITICAL: UDPC updater pause timed out after 10 seconds")
+                    # Continue anyway - maybe we can still send reboot
                 except Exception as e:
                     _LOGGER.error(
                         "CRITICAL: Failed to pause UDPC updater: %s: %s",
