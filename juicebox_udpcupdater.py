@@ -198,6 +198,20 @@ class JuiceboxUDPCUpdater:
                 await self._telnet.close()
                 self._telnet = None
                 sleep_interval = 3
+            except Exception as e:
+                _LOGGER.warning(
+                    "UDPC Update Loop encountered error; will reconnect. %s: %s",
+                    e.__class__.__qualname__,
+                    e,
+                )
+                await self._add_error()
+                if self._telnet is not None:
+                    try:
+                        await self._telnet.close()
+                    except Exception:
+                        pass
+                    self._telnet = None
+                sleep_interval = 3
             await asyncio.sleep(sleep_interval)
         # When too many errors occur, back off instead of crashing the whole app
         _LOGGER.warning(

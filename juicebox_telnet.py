@@ -36,6 +36,11 @@ class JuiceboxTelnet:
                 data = await self.reader.readuntil(match)
         except asyncio.TimeoutError as e:
             raise TimeoutError(f"readuntil (match: {match}, data: {data})") from e
+        except asyncio.IncompleteReadError as e:
+            # Underlying stream hit EOF or was closed
+            raise ConnectionResetError(
+                f"readuntil incomplete (match: {match}, data: {data})"
+            ) from e
         except ConnectionResetError as e:
             raise ConnectionResetError(
                 f"readuntil (match: {match}, data: {data})"
@@ -49,18 +54,35 @@ class JuiceboxTelnet:
                 await self.writer.drain()
         except TimeoutError as e:
             raise TimeoutError(f"write (data: {data})") from e
-        except ConnectionResetError as e:
+        except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError) as e:
             raise ConnectionResetError(f"write (data: {data})") from e
         return True
 
     async def open(self):
+        # If we think we have an open connection, heartbeat it; otherwise (re)open.
+        if self.reader is not None and self.writer is not None:
+            try:
+                # quick heartbeat to verify prompt is reachable
+                await self.write(b"\n")
+                await self.readuntil(b"> ")
+            except (TimeoutError, ConnectionResetError, OSError):
+                # Underlying transport is gone; reset and reopen
+                await self.close()
+                self.reader = None
+                self.writer = None
+
         if self.reader is None or self.writer is None:
             try:
                 async with asyncio.timeout(self.timeout):
                     self.reader, self.writer = await telnetlib3.open_connection(
                         self.host, self.port, encoding=False
                     )
-                await self.readuntil(b">")
+                # read initial prompt (some devices send ">" or "> ")
+                try:
+                    await self.readuntil(b"> ")
+                except TimeoutError:
+                    # fallback if device prompts with just '>'
+                    await self.readuntil(b">")
             except TimeoutError as e:
                 raise TimeoutError("Telnet Connection Failed") from e
             except ConnectionResetError as e:
