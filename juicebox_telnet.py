@@ -172,3 +172,40 @@ class JuiceboxTelnet:
             await self.write(cmd)
             await self.readuntil(b">")
             _LOGGER.info(f"Command '{command}' sent successfully.")
+
+    async def reboot(self):
+        """
+        Send reboot command. Devices typically respond with 'Success' and close the
+        connection immediately; do not wait for a new prompt. Consider connection
+        close as a success condition.
+        """
+        if await self.open():
+            # Ensure we're at a prompt (best-effort)
+            try:
+                await self.write(b"\n")
+                try:
+                    await self.readuntil(b"> ")
+                except TimeoutError:
+                    await self.readuntil(b">")
+            except Exception:
+                # Not fatal for reboot; proceed to send command
+                pass
+            # Send reboot and return without waiting for prompt
+            cmd = b"reboot\r\n"
+            try:
+                await self.write(cmd)
+            except ConnectionResetError:
+                # If the device closed immediately after receiving reboot, treat as success
+                _LOGGER.info(
+                    "Reboot command likely accepted; connection closed by device."
+                )
+                return True
+            except TimeoutError:
+                # Treat as best-effort success; many devices close quickly
+                _LOGGER.info(
+                    "Reboot command sent (timeout while awaiting device response)."
+                )
+                return True
+            _LOGGER.info("Reboot command sent.")
+            return True
+        return False

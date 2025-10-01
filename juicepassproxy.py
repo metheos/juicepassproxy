@@ -215,7 +215,7 @@ async def send_reboot_command(
                 loglevel=_LOGGER.getEffectiveLevel(),
                 timeout=telnet_timeout,
             ) as tn:
-                await tn.send_command("reboot")
+                await tn.reboot()
                 # Record and publish the time of the scheduled reboot
                 ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
                 _LOGGER.info(f"Scheduled reboot command sent at {ts}")
