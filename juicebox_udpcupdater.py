@@ -39,6 +39,9 @@ class JuiceboxUDPCUpdater:
         self._stop_event = asyncio.Event()
         self._supervisor_task = None
         self._mqtt_handler = mqtt_handler
+        # Pause control: when paused, the supervisor will not (re)connect
+        self._paused = False
+        self._paused_until = None  # epoch seconds or None
 
     async def start(self):
         _LOGGER.info("Starting JuiceboxUDPCUpdater")
@@ -48,6 +51,21 @@ class JuiceboxUDPCUpdater:
             )
         # Run a resilient supervisor loop that keeps trying until closed
         while not self._stop_event.is_set():
+            # Respect pause flag to release Telnet for other tasks (e.g., reboot)
+            if self._paused:
+                # Auto-unpause if a timed pause has expired
+                if self._paused_until is not None and time.time() >= self._paused_until:
+                    self._paused = False
+                    self._paused_until = None
+                    _LOGGER.info("JuiceboxUDPCUpdater pause expired; resuming")
+                    if self._mqtt_handler:
+                        await self._mqtt_handler.publish_task_status(
+                            "juicebox_udpcupdater", "JuiceboxUDPCUpdater resuming"
+                        )
+                else:
+                    # Sleep briefly while paused
+                    await asyncio.sleep(1)
+                    continue
             try:
                 connected = await self._connect()
                 if connected and self._udpc_update_loop_task is not None:
@@ -107,6 +125,58 @@ class JuiceboxUDPCUpdater:
         if self._telnet is not None:
             await self._telnet.close()
             self._telnet = None
+
+    async def pause(self, seconds: float | None = None):
+        """
+        Pause the updater, releasing the Telnet connection and preventing reconnects.
+        If 'seconds' is provided, auto-resume after that many seconds; otherwise, remain
+        paused until resume() is called.
+        """
+        self._paused = True
+        self._paused_until = (time.time() + seconds) if seconds is not None else None
+        # Cancel background loop if running
+        if (
+            self._udpc_update_loop_task is not None
+            and not self._udpc_update_loop_task.done()
+        ):
+            self._udpc_update_loop_task.cancel()
+            try:
+                await self._udpc_update_loop_task
+            except Exception:
+                pass
+            self._udpc_update_loop_task = None
+        # Close Telnet to free the connection
+        if self._telnet is not None:
+            try:
+                await self._telnet.close()
+            except Exception:
+                pass
+            self._telnet = None
+        _LOGGER.info(
+            "JuiceboxUDPCUpdater paused%s",
+            f" for {int(seconds)}s" if seconds is not None else "",
+        )
+        if self._mqtt_handler:
+            await self._mqtt_handler.publish_task_status(
+                "juicebox_udpcupdater",
+                f"JuiceboxUDPCUpdater paused{f' for {int(seconds)}s' if seconds is not None else ''}",
+            )
+
+    async def resume(self):
+        """Resume the updater if previously paused."""
+        if self._paused:
+            self._paused = False
+            self._paused_until = None
+            _LOGGER.info("JuiceboxUDPCUpdater resumed")
+            if self._mqtt_handler:
+                await self._mqtt_handler.publish_task_status(
+                    "juicebox_udpcupdater", "JuiceboxUDPCUpdater resumed"
+                )
+
+    async def delayed_resume(self, seconds: float):
+        """Resume after a delay (non-blocking when scheduled via create_task)."""
+        await asyncio.sleep(max(0, seconds))
+        await self.resume()
 
     async def _connect(self) -> bool:
         connect_attempt = 1

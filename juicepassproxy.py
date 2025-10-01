@@ -191,6 +191,20 @@ async def send_reboot_command(
 
         # Validate the 'status' of the juicebox is 'Unplugged'
         if entity_values.get("status") == "Unplugged":
+            # Pause UDPC updater to free Telnet, resume after reboot window
+            # We pause the UDPC updater to free the single Telnet session used by the box.
+            # The updater keeps trying to heartbeat/open the same session, preventing the reboot command
+            # from acquiring the prompt reliably. Pause here and resume shortly after issuing reboot.
+            if udpc_updater is not None:
+                try:
+                    await udpc_updater.pause()
+                    _LOGGER.info("Paused UDPC updater before reboot")
+                except Exception as e:
+                    _LOGGER.warning(
+                        "Failed to pause UDPC updater prior to reboot: %s: %s",
+                        e.__class__.__qualname__,
+                        e,
+                    )
             async with JuiceboxTelnet(
                 juicebox_host,
                 telnet_port,
@@ -206,6 +220,19 @@ async def send_reboot_command(
                 except Exception as e:
                     _LOGGER.debug(
                         f"Failed to publish last_reboot timestamp: {e.__class__.__qualname__}: {e}"
+                    )
+            # Schedule UDPC updater resume 10 seconds after sending reboot
+            # Give the device a moment to accept the reboot and for Telnet to drop, then resume updater.
+            # The resume call is delayed to avoid reconnect thrash during reboot.
+            if udpc_updater is not None:
+                try:
+                    asyncio.create_task(udpc_updater.delayed_resume(10))
+                    _LOGGER.info("Scheduled UDPC updater to resume in 10s")
+                except Exception as e:
+                    _LOGGER.warning(
+                        "Failed to schedule UDPC updater resume: %s: %s",
+                        e.__class__.__qualname__,
+                        e,
                     )
                 return True
         else:
