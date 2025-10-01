@@ -1,7 +1,7 @@
 import logging
 
 # Will auto-update based on GitHub release tag
-VERSION = "v0.6.0"
+VERSION = "v0.6.1"
 
 CONF_YAML = "juicepassproxy.yaml"
 

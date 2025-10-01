@@ -186,6 +186,8 @@ async def get_juicebox_id(juicebox_host, telnet_port, telnet_timeout=None):
 async def send_reboot_command(
     juicebox_host, telnet_port, mqtt_handler, telnet_timeout, udpc_updater
 ):
+    _LOGGER.info("send_reboot_command: Starting function")
+
     try:
         entity_values = mqtt_handler.get_entity_values()
         _LOGGER.info(
@@ -195,112 +197,137 @@ async def send_reboot_command(
 
         # Validate the 'status' of the juicebox is 'Unplugged'
         if entity_values.get("status") == "Unplugged":
-            # Pause UDPC updater to free Telnet, resume after reboot window
-            # We pause the UDPC updater to free the single Telnet session used by the box.
-            # The updater keeps trying to heartbeat/open the same session, preventing the reboot command
-            # from acquiring the prompt reliably. Pause here and resume shortly after issuing reboot.
-            # Pause UDPC indefinitely; we'll resume after we successfully send reboot (or on failure)
+            _LOGGER.info("Status is Unplugged, proceeding with reboot")
+
+            # Pause UDPC updater to free Telnet
             if udpc_updater is not None:
+                _LOGGER.info("Attempting to pause UDPC updater...")
                 try:
                     await udpc_updater.pause()
                     _LOGGER.info("Paused UDPC updater before reboot (no auto-resume)")
                 except Exception as e:
-                    _LOGGER.warning(
-                        "Failed to pause UDPC updater prior to reboot: %s: %s",
+                    _LOGGER.error(
+                        "CRITICAL: Failed to pause UDPC updater: %s: %s",
                         e.__class__.__qualname__,
                         e,
                     )
-            # Give the device a brief moment after releasing the prior Telnet
-            await asyncio.sleep(2)
+                    # Continue anyway - maybe we can still send reboot
+            else:
+                _LOGGER.info("No UDPC updater to pause")
 
-            # Try to open Telnet and send reboot with short retries (device may refuse new connections briefly)
+            # Give the device a brief moment after releasing the prior Telnet
+            _LOGGER.info("Waiting 2 seconds after pausing UDPC...")
+            await asyncio.sleep(2)
+            _LOGGER.info("Wait complete, starting reboot attempts")
+
+            # Try to open Telnet and send reboot with short retries
             reboot_sent = False
             max_attempts = 20  # ~20s window with 1s backoff
+            _LOGGER.info("Starting reboot attempt loop (max %d attempts)", max_attempts)
+
             for attempt in range(1, max_attempts + 1):
                 _LOGGER.info(
                     "Reboot attempt %d/%d: opening Telnet...", attempt, max_attempts
                 )
                 try:
+                    _LOGGER.info("Creating JuiceboxTelnet instance...")
                     async with JuiceboxTelnet(
                         juicebox_host,
                         telnet_port,
                         loglevel=_LOGGER.getEffectiveLevel(),
                         timeout=telnet_timeout,
                     ) as tn:
+                        _LOGGER.info("Telnet connection established, sending reboot...")
                         await tn.reboot()
                         _LOGGER.info(
-                            "Reboot command issued to JuiceBox (attempt %d)", attempt
+                            "SUCCESS: Reboot command issued to JuiceBox (attempt %d)",
+                            attempt,
                         )
                         reboot_sent = True
                         break
-                except (TimeoutError, ConnectionResetError, OSError) as e:
-                    _LOGGER.warning(
+                except Exception as e:
+                    _LOGGER.error(
                         "Reboot attempt %d failed: %s: %s",
                         attempt,
                         e.__class__.__qualname__,
                         e,
                     )
-                    await asyncio.sleep(1)
+                    if attempt < max_attempts:
+                        _LOGGER.info("Waiting 1 second before next attempt...")
+                        await asyncio.sleep(1)
+
+            _LOGGER.info("Reboot attempt loop complete, reboot_sent=%s", reboot_sent)
 
             if reboot_sent:
+                _LOGGER.info("Processing successful reboot...")
                 # Record and publish the time of the scheduled reboot
                 ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
                 _LOGGER.info(f"Scheduled reboot command sent at {ts}")
+
                 try:
                     _LOGGER.info("Publishing last_reboot timestamp: %s", ts)
                     await mqtt_handler.get_entity("last_reboot").set_state(ts)
+                    _LOGGER.info("Successfully published last_reboot timestamp")
                 except Exception as e:
-                    _LOGGER.debug(
+                    _LOGGER.error(
                         f"Failed to publish last_reboot timestamp: {e.__class__.__qualname__}: {e}"
                     )
+
                 try:
+                    _LOGGER.info("Publishing reboot task status...")
                     await mqtt_handler.publish_task_status(
                         "reboot", f"Scheduled reboot command sent at {ts}"
                     )
-                except Exception:
-                    pass
-                # Resume UDPC a bit after reboot command to avoid reconnect thrash during device restart
+                    _LOGGER.info("Successfully published reboot task status")
+                except Exception as e:
+                    _LOGGER.error(f"Failed to publish reboot task status: {e}")
+
+                # Resume UDPC after reboot command
                 if udpc_updater is not None:
                     try:
+                        _LOGGER.info("Scheduling UDPC updater resume in 10s...")
                         asyncio.create_task(udpc_updater.delayed_resume(10))
                         _LOGGER.info("Scheduled UDPC updater to resume in 10s")
                     except Exception as e:
-                        _LOGGER.warning(
+                        _LOGGER.error(
                             "Failed to schedule UDPC updater resume: %s: %s",
                             e.__class__.__qualname__,
                             e,
                         )
+                _LOGGER.info("send_reboot_command: Returning True (success)")
                 return True
             else:
-                _LOGGER.warning("All reboot attempts failed; resuming UDPC updater")
+                _LOGGER.error("All reboot attempts failed; resuming UDPC updater")
                 if udpc_updater is not None:
                     try:
                         await udpc_updater.resume()
-                    except Exception:
-                        pass
+                        _LOGGER.info("Resumed UDPC updater after failed reboot")
+                    except Exception as e:
+                        _LOGGER.error("Failed to resume UDPC updater: %s", e)
+                _LOGGER.info("send_reboot_command: Returning False (failure)")
                 return False
         else:
             _LOGGER.warning(
-                "Scheduled reboot skipped: Juicebox status is not 'Unplugged'."
+                "Scheduled reboot skipped: Juicebox status is not 'Unplugged' (status=%s)",
+                entity_values.get("status"),
             )
+            _LOGGER.info("send_reboot_command: Returning False (status not unplugged)")
             return False
-    except TimeoutError as e:
-        _LOGGER.warning(
-            "Error in sending reboot command via Telnet. "
-            f"({e.__class__.__qualname__}: {e})"
+
+    except Exception as e:
+        _LOGGER.exception(
+            "CRITICAL ERROR in send_reboot_command: %s: %s",
+            e.__class__.__qualname__,
+            e,
         )
-        return False
-    except ConnectionResetError as e:
-        _LOGGER.warning(
-            "Error in sending reboot command via Telnet. "
-            f"({e.__class__.__qualname__}: {e})"
-        )
-        return False
-    except OSError as e:
-        _LOGGER.warning(
-            "Error in sending reboot command via Telnet. "
-            f"({e.__class__.__qualname__}: {e})"
-        )
+        # Try to resume UDPC if we had paused it
+        if udpc_updater is not None:
+            try:
+                await udpc_updater.resume()
+                _LOGGER.info("Emergency resumed UDPC updater after exception")
+            except Exception:
+                _LOGGER.error("Failed to emergency resume UDPC updater")
+        _LOGGER.info("send_reboot_command: Returning False (exception)")
         return False
 
 
