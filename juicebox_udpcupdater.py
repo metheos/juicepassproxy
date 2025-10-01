@@ -74,8 +74,12 @@ class JuiceboxUDPCUpdater:
                     # Couldn't start the loop; quick retry
                     await asyncio.sleep(5)
             except asyncio.CancelledError:
-                # Graceful shutdown
-                break
+                # Task was cancelled. If we're stopping, exit; otherwise likely due to pause.
+                if self._stop_event.is_set():
+                    break
+                else:
+                    await asyncio.sleep(0)
+                    continue
             except ChildProcessError as e:
                 _LOGGER.warning(
                     "JuiceboxUDPCUpdater encountered an error, will retry. "

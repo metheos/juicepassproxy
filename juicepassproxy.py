@@ -221,6 +221,12 @@ async def send_reboot_command(
                     _LOGGER.debug(
                         f"Failed to publish last_reboot timestamp: {e.__class__.__qualname__}: {e}"
                     )
+                try:
+                    await mqtt_handler.publish_task_status(
+                        "reboot", f"Scheduled reboot command sent at {ts}"
+                    )
+                except Exception:
+                    pass
             # Schedule UDPC updater resume 10 seconds after sending reboot
             # Give the device a moment to accept the reboot and for Telnet to drop, then resume updater.
             # The resume call is delayed to avoid reconnect thrash during reboot.
@@ -234,7 +240,7 @@ async def send_reboot_command(
                         e.__class__.__qualname__,
                         e,
                     )
-                return True
+            return True
         else:
             _LOGGER.warning(
                 "Scheduled reboot skipped: Juicebox status is not 'Unplugged'."
