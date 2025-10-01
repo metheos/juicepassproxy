@@ -432,6 +432,15 @@ class JuiceboxMQTTHandler:
                 initial_state="Initializing...",
                 expire_after=0,
             ),
+            "last_reboot": JuiceboxMQTTSensor(
+                name="Last Scheduled Reboot",
+                enabled_by_default=True,
+                icon="mdi:restart",
+                # Home Assistant supports 'timestamp' device_class for sensors
+                device_class="timestamp",
+                entity_category="diagnostic",
+                expire_after=0,  # Keep last timestamp available
+            ),
             "data_from_juicebox": JuiceboxMQTTSensor(
                 name="Data from JuiceBox",
                 experimental=True,

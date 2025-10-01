@@ -38,7 +38,7 @@ from juicebox_telnet import JuiceboxTelnet
 from juicebox_udpcupdater import JuiceboxUDPCUpdater
 from juicebox_config import JuiceboxConfig
 from croniter import croniter
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(
     format=LOG_FORMAT,
@@ -209,26 +209,39 @@ async def send_reboot_command(
                 timeout=telnet_timeout,
             ) as tn:
                 await tn.send_command("reboot")
-                _LOGGER.info("Reboot command sent successfully.")
+                # Record and publish the time of the scheduled reboot
+                ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+                _LOGGER.info(f"Scheduled reboot command sent at {ts}")
+                try:
+                    await mqtt_handler.get_entity("last_reboot").set_state(ts)
+                except Exception as e:
+                    _LOGGER.debug(
+                        f"Failed to publish last_reboot timestamp: {e.__class__.__qualname__}: {e}"
+                    )
+                return True
         else:
             _LOGGER.warning(
-                "Juicebox status is not 'Unplugged'. Reboot command not sent."
+                "Scheduled reboot skipped: Juicebox status is not 'Unplugged'."
             )
+            return False
     except TimeoutError as e:
         _LOGGER.warning(
             "Error in sending reboot command via Telnet. "
             f"({e.__class__.__qualname__}: {e})"
         )
+        return False
     except ConnectionResetError as e:
         _LOGGER.warning(
             "Error in sending reboot command via Telnet. "
             f"({e.__class__.__qualname__}: {e})"
         )
+        return False
     except OSError as e:
         _LOGGER.warning(
             "Error in sending reboot command via Telnet. "
             f"({e.__class__.__qualname__}: {e})"
         )
+        return False
 
 
 def ip_to_tuple(ip):
@@ -246,6 +259,65 @@ async def scheduled_task(cron_schedule, task_function, *args):
         sleep_duration = (next_run - datetime.now()).total_seconds()
         await asyncio.sleep(sleep_duration)
         await task_function(*args)
+
+
+async def scheduled_reboot_task(
+    cron_schedule,
+    task_function,
+    juicebox_host,
+    telnet_port,
+    mqtt_handler,
+    telnet_timeout,
+    udpc_updater,
+):
+    """
+    Run the reboot on the provided cron schedule. If the reboot is skipped
+    because the JuiceBox is not Unplugged, re-check every hour until safe,
+    perform the reboot, then resume using the defined cron schedule.
+    """
+    base_time = datetime.now()
+    cron = croniter(cron_schedule, base_time)
+    while True:
+        next_run = cron.get_next(datetime)
+        sleep_duration = (next_run - datetime.now()).total_seconds()
+        await asyncio.sleep(max(0, sleep_duration))
+
+        # Attempt reboot at scheduled time
+        success = await task_function(
+            juicebox_host, telnet_port, mqtt_handler, telnet_timeout, udpc_updater
+        )
+        if success:
+            # Reboot sent; continue with the next cron time
+            continue
+
+        # Not safe to reboot now; poll hourly until Unplugged
+        _LOGGER.info(
+            "Scheduled reboot deferred; will re-check every 3600s until status is 'Unplugged'."
+        )
+        while True:
+            await asyncio.sleep(3600)
+            # Check current status
+            try:
+                status = mqtt_handler.get_entity_values().get("status")
+            except Exception:
+                status = None
+            if status == "Unplugged":
+                success = await task_function(
+                    juicebox_host,
+                    telnet_port,
+                    mqtt_handler,
+                    telnet_timeout,
+                    udpc_updater,
+                )
+                if success:
+                    _LOGGER.info(
+                        "Deferred reboot completed; resuming defined schedule."
+                    )
+                    break
+            else:
+                _LOGGER.info(
+                    f"Reboot still not safe (status={status}); will re-check in 3600s."
+                )
 
 
 async def parse_args():
@@ -658,7 +730,7 @@ async def main():
         if args.cron_reboot_schedule:
             jpp_task_list.append(
                 asyncio.create_task(
-                    scheduled_task(
+                    scheduled_reboot_task(
                         args.cron_reboot_schedule,
                         send_reboot_command,
                         args.juicebox_host,
@@ -667,7 +739,7 @@ async def main():
                         telnet_timeout,
                         udpc_updater,
                     ),
-                    name="scheduled_task",
+                    name="scheduled_reboot_task",
                 )
             )
 
