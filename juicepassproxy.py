@@ -199,23 +199,50 @@ async def send_reboot_command(
             # We pause the UDPC updater to free the single Telnet session used by the box.
             # The updater keeps trying to heartbeat/open the same session, preventing the reboot command
             # from acquiring the prompt reliably. Pause here and resume shortly after issuing reboot.
+            # Pause UDPC indefinitely; we'll resume after we successfully send reboot (or on failure)
             if udpc_updater is not None:
                 try:
-                    await udpc_updater.pause(12)
-                    _LOGGER.info("Paused UDPC updater for 12s before reboot")
+                    await udpc_updater.pause()
+                    _LOGGER.info("Paused UDPC updater before reboot (no auto-resume)")
                 except Exception as e:
                     _LOGGER.warning(
                         "Failed to pause UDPC updater prior to reboot: %s: %s",
                         e.__class__.__qualname__,
                         e,
                     )
-            async with JuiceboxTelnet(
-                juicebox_host,
-                telnet_port,
-                loglevel=_LOGGER.getEffectiveLevel(),
-                timeout=telnet_timeout,
-            ) as tn:
-                await tn.reboot()
+            # Give the device a brief moment after releasing the prior Telnet
+            await asyncio.sleep(2)
+
+            # Try to open Telnet and send reboot with short retries (device may refuse new connections briefly)
+            reboot_sent = False
+            max_attempts = 20  # ~20s window with 1s backoff
+            for attempt in range(1, max_attempts + 1):
+                _LOGGER.info(
+                    "Reboot attempt %d/%d: opening Telnet...", attempt, max_attempts
+                )
+                try:
+                    async with JuiceboxTelnet(
+                        juicebox_host,
+                        telnet_port,
+                        loglevel=_LOGGER.getEffectiveLevel(),
+                        timeout=telnet_timeout,
+                    ) as tn:
+                        await tn.reboot()
+                        _LOGGER.info(
+                            "Reboot command issued to JuiceBox (attempt %d)", attempt
+                        )
+                        reboot_sent = True
+                        break
+                except (TimeoutError, ConnectionResetError, OSError) as e:
+                    _LOGGER.warning(
+                        "Reboot attempt %d failed: %s: %s",
+                        attempt,
+                        e.__class__.__qualname__,
+                        e,
+                    )
+                    await asyncio.sleep(1)
+
+            if reboot_sent:
                 # Record and publish the time of the scheduled reboot
                 ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
                 _LOGGER.info(f"Scheduled reboot command sent at {ts}")
@@ -232,7 +259,26 @@ async def send_reboot_command(
                     )
                 except Exception:
                     pass
-            return True
+                # Resume UDPC a bit after reboot command to avoid reconnect thrash during device restart
+                if udpc_updater is not None:
+                    try:
+                        asyncio.create_task(udpc_updater.delayed_resume(10))
+                        _LOGGER.info("Scheduled UDPC updater to resume in 10s")
+                    except Exception as e:
+                        _LOGGER.warning(
+                            "Failed to schedule UDPC updater resume: %s: %s",
+                            e.__class__.__qualname__,
+                            e,
+                        )
+                return True
+            else:
+                _LOGGER.warning("All reboot attempts failed; resuming UDPC updater")
+                if udpc_updater is not None:
+                    try:
+                        await udpc_updater.resume()
+                    except Exception:
+                        pass
+                return False
         else:
             _LOGGER.warning(
                 "Scheduled reboot skipped: Juicebox status is not 'Unplugged'."
